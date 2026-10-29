@@ -1,5 +1,21 @@
 # 更新日志
 
+## 0.7.1 — 2026-10-29
+
+把 0.7.0 漏掉的 **qq-bridge 设置界面**补进世界控制台：原来要手改 YAML 的 QQ 连接项，现在面板上就能填。
+
+### QQ 设置面板
+
+- 世界控制台 QQ 卡片新增表单（=`QqNativeStatus.settings` + `POST /dsh-world/console/qq-settings` → `setSettings()`）：接口地址、接口令牌、轮询间隔、群聊接话方式、关键词、谁可以说话、黑名单（私聊 / 群）、冷却秒数、每分钟上限、回复概率。
+- 令牌永远是只写的：状态里只回 `hasToken`，浏览器看不到明文。
+- 面板写入落在 `<世界>/qq-native.json`（与 YAML 配置合并，面板优先）；改地址 / 令牌 / 轮询间隔会**当场重连**，其余项下一句生效。
+- 数值与名单在服务端夹紧：轮询间隔 500–30000ms、冷却 0–300s、每分钟 1–120、概率 0–100；名单按逗号 / 空格 / 顿号拆开去重；`httpUrl` 自动去尾斜杠；不认识的字段丢弃。
+- 「插件」页面现在也能进入世界控制台：`client/index.js` 同时注册 `settings.section`、`settings.plugins.tab` 与顶层 `plugins.tab`（原来只注册了 `settings.section`，所以「插件」页是空的）。
+
+### 其它
+
+- 测试：新增 `tests/console.test.ts` 的 `qq-settings` 用例与 `tests/qqNative.test.ts` 的 `setSettings` 用例（夹紧、去重、令牌不回传、落盘、重开模块仍在）；共 `321` 项通过。
+
 ## 0.7.0 — 2026-10-29
 
 合并版：把 [Yuuyuko-uu/dsh-qq-bridge](https://github.com/Yuuyuko-uu/dsh-qq-bridge) 的 OneBot 11 HTTP 连接层并进 `dsh-world`，QQ 不再手绑会话、微信加一键安装、群聊默认不 @ 也接。包名与插件 id 仍是 `dsh-world`，是 0.6.0 的平替升级；世界数据（`~/.dsh/worlds/`）不动。

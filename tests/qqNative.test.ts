@@ -273,6 +273,52 @@ test('whoCanTalk: everyone 也挡黑名单 —— deny 永远优先', async t =>
   assert.equal(channel.status().blocked, 1, '黑名单里的号记一笔挡下');
 });
 
+test('面板上的「连到哪个 QQ 后端」：设置存进 stateFile，数字夹在范围内，令牌只说有没有', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-world-qq-settings-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { ctx, cleanup } = await hostFixture(t, () => textResponse('在。'));
+  const agent = (await ctx.agents.create({ sessionId: SessionId('home'), agentOptions: { provider: 'test', model: 'test' } })).agent;
+  const stateFile = join(dir, 'qq-native.json');
+  const wire = fakeTransport();
+  const channel = createQqNativeModule({ ctx, home: async () => agent, config: () => configOf(), stateFile, logger: quiet, transport: wire.factory });
+  channel.start(); cleanup.push(channel.stop);
+
+  channel.setSettings({
+    httpUrl: 'http://127.0.0.1:3900/',
+    accessToken: 'tok',
+    pollIntervalMs: 9,
+    whoCanTalk: 'everyone',
+    groupTrigger: 'all',
+    groupKeywords: ' 大肥鱼，小鱼　',
+    denyPrivate: ['111', '111', ' '],
+    replyCooldownSec: 999,
+    maxPerMinute: 0,
+    replyProbability: 150,
+    bogus: 'nope',
+  });
+
+  const settings = channel.status().settings;
+  assert.equal(settings.httpUrl, 'http://127.0.0.1:3900', '尾斜杠去掉');
+  assert.equal(settings.hasToken, true, '令牌不回给浏览器');
+  assert.equal(settings.pollIntervalMs, 500, '低于下限的轮询间隔夹到 500');
+  assert.equal(settings.whoCanTalk, 'everyone');
+  assert.equal(settings.groupTrigger, 'all');
+  assert.deepEqual(settings.groupKeywords, ['大肥鱼', '小鱼']);
+  assert.deepEqual(settings.denyPrivate, ['111']);
+  assert.equal(settings.replyCooldownSec, 300);
+  assert.equal(settings.maxPerMinute, 1);
+  assert.equal(settings.replyProbability, 100);
+
+  const saved = JSON.parse(readFileSync(stateFile, 'utf8')) as Record<string, unknown>;
+  assert.equal(saved.httpUrl, 'http://127.0.0.1:3900');
+  assert.equal(saved.accessToken, 'tok');
+  assert.equal('bogus' in saved, false, '不认识的字段不落盘');
+
+  const again = createQqNativeModule({ ctx, home: async () => agent, config: () => configOf(), stateFile, logger: quiet, transport: wire.factory });
+  assert.equal(again.status().settings.whoCanTalk, 'everyone', '重开模块设置还在');
+  assert.equal(again.status().settings.hasToken, true);
+});
+
 
 test('她回过的话记成她自己说的：下一轮的上下文里那几句是 assistant', async t => {
   const { ctx, cleanup } = await hostFixture(t, () => textResponse('我在。'));

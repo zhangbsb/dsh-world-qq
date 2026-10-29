@@ -373,6 +373,67 @@ window.__ModuleLoader__.load({
     function Qq(props) {
       var busyState = useState(false), busy = busyState[0], setBusy = busyState[1]
       var msgState = useState(''), msg = msgState[0], setMsg = msgState[1]
+      var formState = useState(null), form = formState[0], setForm = formState[1]
+      var native = props.native
+      var live = native && native.settings ? native.settings : null
+      // 表单只在 settings 形状变了时重填，免得每轮刷新把正在打的字冲掉。
+      var settingsKey = live ? JSON.stringify(live) : ''
+      useEffect(function () {
+        if (!live) return
+        setForm({
+          httpUrl: live.httpUrl || '',
+          accessToken: '',
+          pollIntervalMs: String(live.pollIntervalMs == null ? 2000 : live.pollIntervalMs),
+          whoCanTalk: live.whoCanTalk || 'everyone',
+          groupTrigger: live.groupTrigger || 'all',
+          groupKeywords: (live.groupKeywords || []).join('，'),
+          denyPrivate: (live.denyPrivate || []).join('，'),
+          denyGroups: (live.denyGroups || []).join('，'),
+          replyCooldownSec: String(live.replyCooldownSec == null ? 3 : live.replyCooldownSec),
+          maxPerMinute: String(live.maxPerMinute == null ? 6 : live.maxPerMinute),
+          replyProbability: String(live.replyProbability == null ? 100 : live.replyProbability),
+        })
+      }, [settingsKey])
+      function change(key, value) {
+        setMsg('')
+        setForm(function (old) { if (!old) return old; var next = {}; for (var k in old) next[k] = old[k]; next[key] = value; return next })
+      }
+      function saveQqSettings() {
+        if (!form) return
+        setBusy(true); setMsg('')
+        var patch = {
+          httpUrl: form.httpUrl,
+          pollIntervalMs: Number(form.pollIntervalMs),
+          whoCanTalk: form.whoCanTalk,
+          groupTrigger: form.groupTrigger,
+          groupKeywords: form.groupKeywords,
+          denyPrivate: form.denyPrivate,
+          denyGroups: form.denyGroups,
+          replyCooldownSec: Number(form.replyCooldownSec),
+          maxPerMinute: Number(form.maxPerMinute),
+          replyProbability: Number(form.replyProbability),
+        }
+        if (form.accessToken !== '') patch.accessToken = form.accessToken
+        post('qq-settings', patch).then(function () {
+          setMsg('保存好了 —— 地址 / 令牌这类改动会当场重连')
+          if (props.onSaved) props.onSaved()
+        }, function (e) { setMsg('失败：' + ((e && e.message) || e)) }).then(function () { setBusy(false) })
+      }
+      var rowStyle = { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', margin: '6px 0' }
+      var labelStyle = { minWidth: '170px' }
+      var inputStyle = { width: '270px', maxWidth: '100%', padding: '4px 8px', borderRadius: '6px', border: '1px solid rgba(128,128,128,.35)', background: 'transparent', color: 'inherit', fontSize: '13px' }
+      function field(label, control, hint) {
+        return h('div', { key: label, style: rowStyle }, [
+          h('span', { key: 'l', className: 'dw-muted', style: labelStyle }, label),
+          control,
+          hint ? h('span', { key: 'h', className: 'dw-muted', style: { fontSize: '12px' } }, hint) : null,
+        ])
+      }
+      function inputFor(key, extra) {
+        var props2 = { key: key, style: inputStyle, disabled: busy, value: form && form[key] != null ? form[key] : '', onChange: function (e) { change(key, e.target.value) } }
+        for (var k in extra || {}) props2[k] = extra[k]
+        return h('input', props2)
+      }
       // 两个控制台都带 X-Frame-Options: DENY，塞不进 iframe，所以交给系统浏览器开。
       // 地址和令牌由宿主半侧现给（/dsh-world/qq/console），所以打开就是登录态。
       function openDoor(kind) {
@@ -449,6 +510,29 @@ window.__ModuleLoader__.load({
             ]),
           ])
         })(props.native),
+        live && form ? h('div', { key: 'set', style: { marginTop: '10px', borderTop: '1px solid rgba(128,128,128,.2)', paddingTop: '8px' } }, [
+          h('div', { key: 't', style: { fontWeight: 600, margin: '6px 0' } }, '连到哪个 QQ 后端'),
+          field('接口地址', inputFor('httpUrl', { placeholder: 'http://127.0.0.1:3000' }), 'NapCat / SnowLuma 的 HTTP 地址'),
+          field('接口令牌', inputFor('accessToken', { type: 'password', placeholder: live.hasToken ? '已保存，留空 = 不改' : '没设令牌就留空' }), '后端开了 HTTP 鉴权才填'),
+          field('多久拉一次新消息（毫秒）', inputFor('pollIntervalMs', { type: 'number', min: 500, max: 30000, style: { width: '110px' } }), '默认 2000'),
+          h('div', { key: 't2', style: { fontWeight: 600, margin: '12px 0 6px' } }, '群聊怎么接话'),
+          field('群聊', h('select', { key: 'gt', style: inputStyle, disabled: busy, value: form.groupTrigger, onChange: function (e) { change('groupTrigger', e.target.value) } }, [
+            h('option', { key: 'all', value: 'all' }, '不 @ 也接（每句都过一遍）'),
+            h('option', { key: 'mention', value: 'mention' }, '只在被 @ / 被引用时接'),
+          ]), '@、引用她的话不受下面的节奏限制'),
+          field('关键词也算在叫她', inputFor('groupKeywords', { placeholder: '用逗号隔开，可留空' }), '只在「被叫到才接」时有用'),
+          field('谁可以跟她说话', h('select', { key: 'wt', style: inputStyle, disabled: busy, value: form.whoCanTalk, onChange: function (e) { change('whoCanTalk', e.target.value) } }, [
+            h('option', { key: 'e', value: 'everyone' }, '谁发都收（每个聊天自动开一间房）'),
+            h('option', { key: 'l', value: 'list' }, '只认白名单里的聊天'),
+          ]), '不用手动绑定'),
+          field('黑名单：私聊', inputFor('denyPrivate', { placeholder: 'QQ 号，逗号隔开' }), '永远不接'),
+          field('黑名单：群', inputFor('denyGroups', { placeholder: '群号，逗号隔开' }), '永远不接'),
+          field('两条之间至少隔（秒）', inputFor('replyCooldownSec', { type: 'number', min: 0, max: 300, style: { width: '90px' } }), '默认 3'),
+          field('一分钟最多回几条', inputFor('maxPerMinute', { type: 'number', min: 1, max: 120, style: { width: '90px' } }), '默认 6'),
+          field('不是每句都接（概率 %）', inputFor('replyProbability', { type: 'number', min: 0, max: 100, style: { width: '90px' } }), '100 = 每句都接'),
+          h('div', { key: 'b', className: 'dw-setting' }, h('button', { className: 'dw-btn', disabled: busy, onClick: saveQqSettings }, busy ? '保存中…' : '保存 QQ 设置')),
+          h('div', { key: 'n', className: 'dw-muted' }, '不用手工绑定：谁给这个号发消息，就自动在房间里开一间会话；群聊也会自己建。'),
+        ]) : null,
         h('div', { key: 'k', className: 'dw-setting' },
           h('button', { className: 'dw-btn', disabled: busy, onClick: function () { openDoor('snowluma') } }, '打开 SnowLuma 控制台')),
         h('div', { key: 'b', className: 'dw-setting' },
@@ -625,6 +709,12 @@ window.__ModuleLoader__.load({
     exports.apply = function (ctx) {
       ctx.slots.inject('settings.section', function () {
         return ctx.slots.register({ name: 'settings.section', id: 'world-console', order: 28, label: '世界控制台' }, function () { return h(Console) })
+      })
+      ctx.slots.inject('settings.plugins.tab', function () {
+        return ctx.slots.register({ name: 'settings.plugins.tab', id: 'world-console', order: 30, label: '世界控制台' }, function () { return h(Console) })
+      })
+      ctx.slots.inject('plugins.tab', function () {
+        return ctx.slots.register({ name: 'plugins.tab', id: 'world-console', order: 20, label: '世界控制台' }, function () { return h(Console) })
       })
     }
     Object.defineProperty(exports, '__test', { value: { Modules: Modules, Wechat: Wechat, Activity: Activity, Diary: Diary, Qq: Qq, Panel: Panel, View: View, Overview: Overview, PersonaEditor: PersonaEditor, PromptEditor: PromptEditor, loadSnapshot: loadSnapshot, renderPersona: renderPersona }, enumerable: false })

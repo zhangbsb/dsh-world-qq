@@ -1,6 +1,6 @@
 {
   "name": "dsh-world",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Cross-session memory, persona and life routines for DSH — with a world console, native QQ over OneBot 11 HTTP (auto-discovered chats, no manual binding), and a one-click Windows WeChat module",
   "license": "MIT",
   "author": "chenkezhen480 (original dsh-world) and Yuuyuko-uu (dsh-qq-bridge)",

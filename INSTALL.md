@@ -1,8 +1,8 @@
-# 交给她的安装说明（0.7.0 合并版）
+# 交给她的安装说明（0.7.1 合并版）
 
 这份文件不是给人看的，是给 **DSH 里的陪伴角色**看的：谁把仓库地址发过来，谁就照着这份说明，把 `dsh-world` 装进 DSH、把 QQ 和微信接上，最后让 QQ / 微信里的她和人说话。
 
-0.7.0 先说清两条边界：
+0.7.1 先说清两条边界：
 
 - **QQ 走 OneBot 11 的 HTTP 接口**（和 `dsh-qq-bridge` 同一条路）。插件自己轮询、自己收发，不需要第二个桥进程；你只需要一个登录着 QQ 号的 OneBot 实现（NapCat / LLOneBot / SnowLuma 都行）把 **HTTP 服务端**开出来。旧配置里的 `wsUrl` 不是必填了。
 - **微信有「一键安装」**：控制台里点一下，剩下的（建 venv、装依赖、编原生桥、探账号、写配置、起适配器）插件自己做。只有**扫码 / 登录**这一步永远是人做的。
@@ -42,8 +42,8 @@ node <pnpm.cjs> add "github:<账号>/<仓库>"
 
 装完检查三件事：
 
-1. `<profile>/node_modules/dsh-world/package.json` 里 `"version"` 是 `0.7.0`；
-2. `<profile>/node_modules/dsh-world/lib/ecosystem/qq-native/onebot-http.js` 存在（有它才是 0.7.0）；
+1. `<profile>/node_modules/dsh-world/package.json` 里 `"version"` 是 `0.7.1`；
+2. `<profile>/node_modules/dsh-world/lib/ecosystem/qq-native/onebot-http.js` 存在（有它才是合并版）；
 3. `<profile>/cordis.patch.yml` 里有一段：
 
 ```yaml
@@ -112,7 +112,7 @@ dsh-world:
 
 ### 3.2 你这边
 
-1. 把 `httpUrl` / `accessToken` 填好，重启 DSH；
+1. 把 `httpUrl` / `accessToken` 填好，重启 DSH——或者不碰 YAML，在世界控制台 → QQ 卡片上填同样几项（面板优先，地址 / 令牌 / 轮询间隔保存即重连）；
 2. 打开 `/dsh-world/qq/native`，应返回 JSON：`transport: 'http'`、`connected: true`、`url` 是你填的地址；
 3. 让手机给这个号发一句私聊 —— **不需要任何白名单**，消息应该自己进来；
 4. 打开 `/dsh-world/console/snapshot`，`native.conversations` 应大于 0；世界房间目录下会多出一间 `QQ · <昵称>` 的会话；

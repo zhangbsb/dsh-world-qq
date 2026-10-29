@@ -15,7 +15,7 @@
 2. **微信有一键安装按钮。** 世界控制台的微信卡片上点一下「一键安装微信模块」，插件会建虚拟环境、装依赖、编译原生桥、探测微信账号和聊天列表、写好配置、把适配器拉起来 —— 不用再手动跑 `wechat.ps1` 和手抄 `config.json`。
 3. **群聊不必 @ 才说话。** 微信适配器和 QQ 通道都支持 `trigger: all` / `groupTrigger: all`：群里每句话都递给她，该不该开口由她自己判断，另配冷却、每分钟上限和回复概率防止刷屏。
 
-当前版本 **0.7.0**。变更见 [CHANGELOG.md](CHANGELOG.md)，给模型看的安装说明见 [INSTALL.md](INSTALL.md)。
+当前版本 **0.7.1**。变更见 [CHANGELOG.md](CHANGELOG.md)，给模型看的安装说明见 [INSTALL.md](INSTALL.md)。
 
 > 本仓库保留上游的包名与插件 id `dsh-world`，所以它是 0.6.0 的**平替升级**：装它、删旧包，世界数据（`~/.dsh/worlds/<世界>/`）不用迁移。
 
@@ -134,6 +134,25 @@ dsh-world:
 4. 重启 DSH，控制台的 QQ 卡显示 `● 她自己连着 http://…`。
 5. 拿手机给这个号发一句私聊 —— 不用加白名单，消息会自己进来，房间里自动多出一间 `QQ · 你` 的会话。
 
+### 也可以在世界控制台里改
+
+设置 → **世界控制台** → QQ 卡片（「插件」页面里也有同一个入口）。那张卡就是原来 qq-bridge 的「连到哪个 QQ 后端」，只是不用再手工绑定：
+
+| 面板项 | 字段 | 说明 |
+| --- | --- | --- |
+| 接口地址 | `httpUrl` | NapCat / LLOneBot 的 HTTP 地址，一般 `http://127.0.0.1:3000` |
+| 接口令牌 | `accessToken` | 后端开了 HTTP 鉴权才填；面板上永远只显示「已保存」，不进浏览器 |
+| 多久拉一次新消息 | `pollIntervalMs` | 默认 2000 毫秒 |
+| 群聊怎么接话 | `groupTrigger` | `all`（默认，不 @ 也接）/ `mention`（被叫到才接） |
+| 关键词也算在叫她 | `groupKeywords` | 只在 `mention` 模式下用 |
+| 谁可以跟她说话 | `whoCanTalk` | `everyone`（默认，谁发都收）/ `list`（只认白名单） |
+| 黑名单：私聊 / 群 | `denyPrivate` / `denyGroups` | 永远不接 |
+| 两条之间至少隔 | `replyCooldownSec` | 默认 3 秒 |
+| 一分钟最多回几条 | `maxPerMinute` | 默认 6 |
+| 不是每句都接 | `replyProbability` | 100 = 每句都接 |
+
+保存后这三类改动会**立刻重连**：地址、令牌、轮询间隔；其余项下一句生效。面板写的值落在 `<世界>/qq-native.json`，和 YAML 里的配置合并，面板优先。
+
 ### 会话是怎么开的
 
 每一段聊天（私聊的某个号、某个群）由 `conversationKey` 唯一标识，插件按这个键在房间里查 / 建会话，标题取 `QQ · <群名>` 或 `QQ · <昵称>`。你不需要在控制台里绑定任何东西，也不需要预先知道群号；第一次收到消息时就会：
@@ -173,7 +192,7 @@ dsh-world:
 
 ---
 
-## 和上游的差异（0.7.0）
+## 和上游的差异（0.7.x）
 
 | 项 | 0.6.0 | 0.7.0（本仓库） |
 | --- | --- | --- |
@@ -184,6 +203,7 @@ dsh-world:
 | 微信群聊 | 只认 `trigger: mention`（真 @ 才接） | 支持 `trigger: all`，一键安装默认写 `all` |
 | 微信安装 | 手跑 `wechat.ps1 Install/Build` + 手抄 config | 控制台一键安装 |
 | 会话绑定 | 手填名单 + 手挂群 | 按聊天自动建会话、自动绑 |
+| QQ 设置界面 | 独立的 qq-bridge 插件页，手填配置 | 世界控制台 QQ 卡片（地址 / 令牌 / 群规矩），「插件」页也有入口 |
 
 旧的 `allowPrivate` / `allowGroups` 仍然有效（`whoCanTalk: list` 时用），旧配置不用改就能跑。
 
@@ -221,7 +241,7 @@ dsh-world:
 ```bash
 pnpm install        # 或 npm install；会跑 scripts/patch-snowluma.mjs
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --experimental-strip-types --test（319 项）
+pnpm test           # node --experimental-strip-types --test（321 项）
 pnpm build          # 产出 lib/（发布/安装包要它）
 ```
 

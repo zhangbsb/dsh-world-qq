@@ -30,6 +30,7 @@ function fakeActions() {
     restartWechatAdapter: async () => { calls.push('adapter-restart'); return true; },
     wechatInstall: () => { calls.push('wechat-install'); return installStatus; },
     wechatInstallStatus: () => installStatus,
+    qqSettings: patch => { calls.push(`qq:${JSON.stringify(patch)}`); return { ok: true, patch }; },
     setWechatSettings: next => { calls.push(`wechat:${JSON.stringify(next)}`); },
   };
   return { actions, calls };
@@ -79,6 +80,14 @@ test('wechat settings validate their range and keep omitted fields', async () =>
   assert.equal((await post({ contextMessages: null })).status, 200);
   for (const body of [{}, { contextMessages: 0 }, { contextMessages: 21 }, { contextMessages: 2.5 }, { bufferSeconds: -1 }, { bufferSeconds: 31 }, { bufferSeconds: '3' }]) assert.equal((await post(body)).status, 400, JSON.stringify(body));
   assert.deepEqual(calls, ['wechat:{"context":12,"bufferSeconds":1.5}', 'wechat:{"context":null}']);
+});
+test('qq settings take a JSON object and hand it to the channel', async () => {
+  const { actions, calls } = fakeActions();
+  const post = (body: unknown) => handleConsole(sources, actions, { method: 'POST', url: '/dsh-world/console/qq-settings', write: true, body: body as Record<string, unknown> });
+  assert.equal((await post({ httpUrl: 'http://127.0.0.1:3000', groupTrigger: 'all' })).status, 200);
+  assert.equal((await post([1, 2])).status, 400);
+  assert.equal((await post(undefined)).status, 400);
+  assert.deepEqual(calls, ['qq:{"httpUrl":"http://127.0.0.1:3000","groupTrigger":"all"}']);
 });
 test('the module switches default to on, only an off switch is written, and it survives a restart', t => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-world-modules-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
