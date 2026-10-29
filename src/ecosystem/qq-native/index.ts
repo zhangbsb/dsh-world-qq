@@ -71,6 +71,12 @@ export interface QqNativeConfig {
   bridge: { port: number; token: string; title: string; contextMessages: number };
 }
 
+/** 面板能改的那些：写进 stateFile，重载后还在；配置里那份是出厂默认。 */
+export type QqOverrides = Partial<Pick<QqNativeConfig,
+  | 'autoReply' | 'transport' | 'httpUrl' | 'accessToken' | 'pollIntervalMs'
+  | 'whoCanTalk' | 'denyPrivate' | 'denyGroups' | 'groupTrigger' | 'groupKeywords'
+  | 'replyCooldownSec' | 'maxPerMinute' | 'replyProbability'>> & { bridge?: { port?: number } };
+
 export interface QqNativeStatus {
   enabled: boolean;
   connected: boolean;
@@ -95,6 +101,26 @@ export interface QqNativeStatus {
   bindHomeSession: 'owner' | 'all' | 'none' | '';
   /** 群里接话的规矩。 */
   groupTrigger: 'mention' | 'all';
+  /** 面板那张「连到哪个 QQ 后端」表单要回填的值（令牌只给「有没有」，不给明文）。 */
+  settings: {
+    transport: 'http' | 'ws';
+    httpUrl: string;
+    wsUrl: string;
+    hasToken: boolean;
+    pollIntervalMs: number;
+    whoCanTalk: 'everyone' | 'list';
+    denyPrivate: string[];
+    denyGroups: string[];
+    allowPrivate: string[];
+    allowGroups: string[];
+    autoReply: boolean;
+    groupTrigger: 'mention' | 'all';
+    groupKeywords: string[];
+    replyCooldownSec: number;
+    maxPerMinute: number;
+    replyProbability: number;
+    bindHomeSession: 'owner' | 'all' | 'none' | '';
+  };
 }
 
 /**
@@ -154,31 +180,32 @@ export function createQqNativeModule(deps: {
     sent: 0, failed: 0, blocked: 0, lastEventAt: null, lastBlockedAt: null, lastError: null,
   };
 
-  // 拨过的开关写在 stateFile 里，重载不丢；配置里那个是出厂默认。
-  let overrides: { autoReply?: boolean; bridge?: { port?: number } } = {};
+  // 面板上拨过 / 填过的东西写在 stateFile 里，重载不丢；配置里那份是出厂默认。
+  let overrides: QqOverrides = {};
   let overridesRead = false;
   function readOverrides(): void {
     if (overridesRead) return;
     overridesRead = true;
     const file = deps.stateFile;
     if (!file) return;
-    try { overrides = JSON.parse(readFileSync(file, 'utf8')) as { autoReply?: boolean; bridge?: { port?: number } }; } catch { overrides = {}; }
+    try { overrides = JSON.parse(readFileSync(file, 'utf8')) as QqOverrides; } catch { overrides = {}; }
   }
   function writeOverrides(): void {
     const file = deps.stateFile;
     if (!file) return;
-    try { writeFileSync(file, JSON.stringify(overrides, null, 2) + '\n', 'utf8'); } catch (error) { deps.logger.warn('QQ 通道：开关没存下来', error); }
+    try { writeFileSync(file, JSON.stringify(overrides, null, 2) + '\n', 'utf8'); } catch (error) { deps.logger.warn('QQ 通道：设置没存下来', error); }
   }
+  /** 合并：面板写过的字段优先，其余跟配置走。 */
   const settings = (): QqNativeConfig => {
     readOverrides();
     const base = deps.config();
-    // 面板上改过端口就以面板为准；其余字段还是配置里那套。
-    const bridge = overrides.bridge?.port === undefined ? base.bridge : { ...base.bridge, port: overrides.bridge.port };
-    return {
-      ...base,
-      ...(overrides.autoReply === undefined ? {} : { autoReply: overrides.autoReply }),
-      bridge,
-    };
+    const merged: QqNativeConfig = { ...base };
+    const { bridge, ...rest } = overrides;
+    for (const [key, value] of Object.entries(rest)) {
+      if (value !== undefined) (merged as unknown as Record<string, unknown>)[key] = value;
+    }
+    merged.bridge = bridge?.port === undefined ? base.bridge : { ...base.bridge, port: bridge.port };
+    return merged;
   };
 
   function remember(messageId: string): boolean {
@@ -371,10 +398,9 @@ export function createQqNativeModule(deps: {
     void nativeBridge.start().catch((error: unknown) => deps.logger.error('阳台没能开起来', error));
   }
 
-  return {
-    status(): QqNativeStatus {
-      const config = settings();
-      return {
+  const statusOf = (): QqNativeStatus => {
+    const config = settings();
+    return {
         enabled: config.enabled,
         connected: client?.getState() === 'online',
         url: config.transport === 'http' ? config.httpUrl : config.wsUrl,
@@ -394,78 +420,153 @@ export function createQqNativeModule(deps: {
         lastError: stats.lastError,
         sent: stats.sent,
         failed: stats.failed,
+        settings: {
+          transport: config.transport,
+          httpUrl: config.httpUrl,
+          wsUrl: config.wsUrl,
+          hasToken: config.accessToken !== '',
+          pollIntervalMs: config.pollIntervalMs,
+          whoCanTalk: config.whoCanTalk,
+          denyPrivate: [...config.denyPrivate],
+          denyGroups: [...config.denyGroups],
+          allowPrivate: [...config.allowPrivate],
+          allowGroups: [...config.allowGroups],
+          autoReply: config.autoReply,
+          groupTrigger: config.groupTrigger,
+          groupKeywords: [...config.groupKeywords],
+          replyCooldownSec: config.replyCooldownSec,
+          maxPerMinute: config.maxPerMinute,
+          replyProbability: config.replyProbability,
+          bindHomeSession: config.bindHomeSession,
+        },
       };
-    },
+  };
+
+  /** 起传输层：start 和「面板改了地址要重连」共用这一段。 */
+  function startTransport(): void {
+    if (stopped) return;
+    const config = settings();
+    if (!config.enabled) return;
+    const log = (level: string, message: string) => {
+      const line = `QQ 通道：${message}`;
+      // 连回来就把上次的报错擦掉（不然面板上挂着一句昨天的错，会让人以为现在还坏着）。
+      // 「QQ 账号离线」不是这一层的事，留着。
+      if (level === 'info') {
+        if ((message.startsWith('WS 已连接') || message.startsWith('OneBot HTTP 已连接')) && stats.lastError !== 'QQ 账号离线') stats.lastError = null;
+        deps.logger.info(line);
+      } else if (level === 'warn') deps.logger.warn(line);
+      else { stats.lastError = message; deps.logger.error(line); }
+    };
+    const wire = {
+      // 传输层只交出一条归一化过的消息，形状见 QqIncoming；两边对不上的字段这里本来也不用。
+      onGroupMessage: (message: unknown) => { void deliver(message as QqIncoming); },
+      onPrivateMessage: (message: unknown) => { void deliver(message as QqIncoming); },
+      // bot_status 是 SnowLuma 的自有扩展：账号掉线时让它显示成「QQ 账号离线」，别和「桥挂了」混在一起。
+      onNotice: (type: string) => {
+        if (type === 'bot_offline') stats.lastError = 'QQ 账号离线';
+        if (type === 'bot_online') stats.lastError = null;
+      },
+      log,
+    };
+    let transport: QqTransport;
+    if (deps.transport) {
+      transport = deps.transport({
+        wsUrl: config.transport === 'http' ? '' : config.wsUrl,
+        ...(config.transport === 'http' ? { baseUrl: config.httpUrl, pollIntervalMs: config.pollIntervalMs } : {}),
+        ...(config.accessToken ? { accessToken: config.accessToken } : {}),
+        ...wire,
+      });
+    } else if (config.transport === 'http') {
+      transport = createOneBotHttpTransport({
+        wsUrl: '',
+        baseUrl: config.httpUrl,
+        pollIntervalMs: config.pollIntervalMs,
+        ...(config.accessToken ? { accessToken: config.accessToken } : {}),
+        ...wire,
+      });
+    } else {
+      transport = createBridge({
+        wsUrl: config.wsUrl,
+        ...(config.accessToken ? { accessToken: config.accessToken } : {}),
+        ...wire,
+      });
+    }
+    client = transport;
+    startBridge(config);
+    transport.start().catch((error: unknown) => {
+      stats.lastError = error instanceof Error ? error.message : String(error);
+      deps.logger.warn('QQ 通道首次连接失败：', stats.lastError);
+    });
+  }
+
+  /** 面板改了地址/令牌：把旧的那条线停掉，再照新配置起一条。 */
+  function reconnectTransport(): void {
+    const current = client;
+    client = undefined;
+    if (!current) { startTransport(); return; }
+    void current.stop().finally(() => { startTransport(); });
+  }
+
+  /** 把面板递来的那几项过一遍：数字夹住、枚举只收认识的、名单拆成数组。 */
+  function cleanSettings(patch: Record<string, unknown>): QqOverrides {
+    const out: Record<string, unknown> = {};
+    const number = (min: number, max: number, value: unknown): number | undefined => {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : undefined;
+    };
+    const names = (value: unknown): string[] | undefined => {
+      if (value === undefined) return undefined;
+      const raw = Array.isArray(value) ? value.map(item => String(item)) : String(value).split(/[\s,，、;；]+/);
+      return [...new Set(raw.map(item => item.trim()).filter(item => item !== ''))].slice(0, 200);
+    };
+    if (typeof patch.autoReply === 'boolean') out.autoReply = patch.autoReply;
+    if (patch.transport === 'http' || patch.transport === 'ws') out.transport = patch.transport;
+    if (typeof patch.httpUrl === 'string') {
+      const url = patch.httpUrl.trim().replace(/\/+$/, '');
+      if (url !== '') out.httpUrl = url;
+    }
+    if (typeof patch.accessToken === 'string') out.accessToken = patch.accessToken.trim().slice(0, 256);
+    if (patch.pollIntervalMs !== undefined) out.pollIntervalMs = number(500, 30000, patch.pollIntervalMs);
+    if (patch.whoCanTalk === 'everyone' || patch.whoCanTalk === 'list') out.whoCanTalk = patch.whoCanTalk;
+    if (patch.groupTrigger === 'mention' || patch.groupTrigger === 'all') out.groupTrigger = patch.groupTrigger;
+    const denyPrivate = names(patch.denyPrivate); if (denyPrivate !== undefined) out.denyPrivate = denyPrivate;
+    const denyGroups = names(patch.denyGroups); if (denyGroups !== undefined) out.denyGroups = denyGroups;
+    const keywords = names(patch.groupKeywords); if (keywords !== undefined) out.groupKeywords = keywords;
+    if (patch.replyCooldownSec !== undefined) out.replyCooldownSec = number(0, 300, patch.replyCooldownSec);
+    if (patch.maxPerMinute !== undefined) out.maxPerMinute = number(1, 120, patch.maxPerMinute);
+    if (patch.replyProbability !== undefined) out.replyProbability = number(0, 100, patch.replyProbability);
+    if (patch.bindHomeSession === 'owner' || patch.bindHomeSession === 'all' || patch.bindHomeSession === 'none' || patch.bindHomeSession === '') out.bindHomeSession = patch.bindHomeSession;
+    return Object.fromEntries(Object.entries(out).filter(([, value]) => value !== undefined)) as QqOverrides;
+  }
+
+  return {
+    status: statusOf,
     /** 面板上改阳台的端口：当场关掉重开那条线（0 就是关）。 */
     setBridge(patch: { port?: number }): QqNativeStatus {
       if (patch.port !== undefined) { overrides.bridge = { port: patch.port }; writeOverrides(); }
       nativeBridge?.stop();
       nativeBridge = undefined;
       startBridge(settings());
-      return this.status();
+      return statusOf();
     },
     /** 面板上那个「会不会自己回」的开关。 */
-    setAutoReply(value: boolean) {
+    setAutoReply(value: boolean): QqNativeStatus {
       readOverrides();
       overrides.autoReply = value;
       writeOverrides();
-      return this.status();
+      return statusOf();
     },
-    start() {
-      if (stopped) return;
-      const config = settings();
-      if (!config.enabled) return;
-      const log = (level: string, message: string) => {
-        const line = `QQ 通道：${message}`;
-        // 连回来就把上次的报错擦掉（不然面板上挂着一句昨天的错，会让人以为现在还坏着）。
-        // 「QQ 账号离线」不是这一层的事，留着。
-        if (level === 'info') {
-          if ((message.startsWith('WS 已连接') || message.startsWith('OneBot HTTP 已连接')) && stats.lastError !== 'QQ 账号离线') stats.lastError = null;
-          deps.logger.info(line);
-        } else if (level === 'warn') deps.logger.warn(line);
-        else { stats.lastError = message; deps.logger.error(line); }
-      };
-      const wire = {
-        // 传输层只交出一条归一化过的消息，形状见 QqIncoming；两边对不上的字段这里本来也不用。
-        onGroupMessage: (message: unknown) => { void deliver(message as QqIncoming); },
-        onPrivateMessage: (message: unknown) => { void deliver(message as QqIncoming); },
-        // bot_status 是 SnowLuma 的自有扩展：账号掉线时让它显示成「QQ 账号离线」，别和「桥挂了」混在一起。
-        onNotice: (type: string) => {
-          if (type === 'bot_offline') stats.lastError = 'QQ 账号离线';
-          if (type === 'bot_online') stats.lastError = null;
-        },
-        log,
-      };
-      let bridge: QqTransport;
-      if (deps.transport) {
-        bridge = deps.transport({
-          wsUrl: config.transport === 'http' ? '' : config.wsUrl,
-          ...(config.transport === 'http' ? { baseUrl: config.httpUrl, pollIntervalMs: config.pollIntervalMs } : {}),
-          ...(config.accessToken ? { accessToken: config.accessToken } : {}),
-          ...wire,
-        });
-      } else if (config.transport === 'http') {
-        bridge = createOneBotHttpTransport({
-          wsUrl: '',
-          baseUrl: config.httpUrl,
-          pollIntervalMs: config.pollIntervalMs,
-          ...(config.accessToken ? { accessToken: config.accessToken } : {}),
-          ...wire,
-        });
-      } else {
-        bridge = createBridge({
-          wsUrl: config.wsUrl,
-          ...(config.accessToken ? { accessToken: config.accessToken } : {}),
-          ...wire,
-        });
-      }
-      client = bridge;
-      startBridge(config);
-      bridge.start().catch((error: unknown) => {
-        stats.lastError = error instanceof Error ? error.message : String(error);
-        deps.logger.warn('QQ 通道首次连接失败：', stats.lastError);
-      });
+    /** 面板那张「连到哪个 QQ 后端」：地址、令牌、群规矩、节奏都从这儿进。 */
+    setSettings(patch: Record<string, unknown>): QqNativeStatus {
+      readOverrides();
+      const clean = cleanSettings(patch);
+      overrides = { ...overrides, ...clean };
+      writeOverrides();
+      if (['transport', 'httpUrl', 'accessToken', 'pollIntervalMs'].some(key => key in clean)) reconnectTransport();
+      deps.logger.info(`QQ 通道：设置已保存${Object.keys(clean).length ? '（' + Object.keys(clean).join('、') + '）' : ''}`);
+      return statusOf();
     },
+    start() { startTransport(); },
     stop() {
       if (stopped) return;
       stopped = true;

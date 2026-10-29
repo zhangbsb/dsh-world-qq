@@ -343,6 +343,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       /** 一键安装：立刻返回当前状态，真正的安装在后台跑，界面轮询 status 看进度。 */
       wechatInstall: () => { void wechatInstaller.install().catch(error => lifeCtx.logger.warn(`微信一键安装失败：${errorText(error)}`)); return wechatInstaller.status(); },
       wechatInstallStatus: () => wechatInstaller.status(),
+      /** 面板那张「连到哪个 QQ 后端」：写进 qq-native.json，地址/令牌变了当场重连。 */
+      qqSettings: patch => {
+        if (!qqNative) throw new Error('QQ 通道没开：配置里 qqNative.enabled 要打开');
+        const status = qqNative.setSettings(patch);
+        sources.invalidate();
+        return status;
+      },
       setWechatSettings: next => { power.setWechat(next); sources.invalidate(); },
       setArchiveScope: scope => { power.setArchiveScope(scope); sources.invalidate(); return power.restartRequired(); },
       saveWorldPrompt: text => { if (text.trim()) durableWrite(worldPromptFile, text); else rmSync(worldPromptFile, { force: true }); },

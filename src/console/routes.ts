@@ -37,6 +37,8 @@ export interface ConsoleActions {
   wechatInstall(): WechatInstallStatus;
   /** Progress of that install; the console polls it. */
   wechatInstallStatus(): WechatInstallStatus;
+  /** 面板那张「连到哪个 QQ 后端」：地址、令牌、群规矩、节奏都从这儿进。 */
+  qqSettings(patch: Record<string, unknown>): unknown;
   setWechatSettings(settings: { context?: number | null; bufferSeconds?: number | null }): void;
 }
 export interface ConsoleRequest { method: string; url: string; write: boolean; body?: Record<string, unknown> | undefined }
@@ -80,6 +82,10 @@ async function write(actions: ConsoleActions, path: string, body: Record<string,
     }
     case '/console/wechat-adapter': return await actions.restartWechatAdapter() ? ok() : bad('适配器不是由插件管理的，请在配置里写 wechatAdapter');
     case '/console/wechat-install': return ok(actions.wechatInstall());
+    case '/console/qq-settings': {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return bad('body must be an object');
+      return ok(actions.qqSettings(body));
+    }
     case '/console/archive-scope': {
       if (!validArchiveScope(body?.scope)) return bad('scope must be home or workspace');
       return ok({ ok: true, restartRequired: actions.setArchiveScope(body.scope) });
